@@ -321,9 +321,9 @@ export default function ProjectionVisualizationSurface({
       {model.curveSurfacePositions.length > 0 ? (
         <lineSegments geometry={curveGeometry} renderOrder={10} frustumCulled={false}>
           <lineBasicMaterial
-            color="#ffd27c"
+            color="#fff1b8"
             transparent
-            opacity={0.98}
+            opacity={1}
             toneMapped={false}
           />
         </lineSegments>

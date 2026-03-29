@@ -244,7 +244,7 @@ function GlobeCurveSegment({
 
   return (
     <lineSegments geometry={geometry} renderOrder={8}>
-      <lineBasicMaterial color="#ffd27c" transparent opacity={0.95} toneMapped={false} />
+      <lineBasicMaterial color="#fff1b8" transparent opacity={1} toneMapped={false} />
     </lineSegments>
   )
 }
