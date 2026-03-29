@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { Vector2 } from 'three'
 import { buildMapScene, pickGeoPointFromScene } from './mapScene'
-import { latLonToVector3 } from './math'
-import { getProjectionDefinition } from './projections'
+import {
+  createDisplayGlobeQuaternion,
+  latLonToVector3,
+  vector3ToGeoPoint,
+} from './math'
+import { getProjectionDefinition, projectGeoPoint } from './projections'
 
 const size = { width: 1080, height: 720 }
 const orientation = { azimuthDeg: 0, elevationDeg: 0 }
@@ -46,6 +50,36 @@ describe('map scene generation', () => {
     expect(rotated).not.toBeNull()
     expect(rotated!.x).not.toBeCloseTo(centered!.x, 1)
     expect(rotated!.y).not.toBeCloseTo(centered!.y, 1)
+  })
+
+  it('projects rotated globe points from the displayed globe pose', () => {
+    const projection = getProjectionDefinition('mercator')
+    const frame = { centralLonDeg: 0, centerLatDeg: 0 }
+    const rotatedOrientation = {
+      azimuthDeg: 30,
+      elevationDeg: 20,
+      rollDeg: 10,
+    }
+    const point = { latDeg: 0, lonDeg: 0 }
+    const scene = buildMapScene(projection, frame, rotatedOrientation, size)
+    const screenPoint = scene.projectGeoToScreen(point)
+    const expectedRaw = projectGeoPoint(
+      projection,
+      vector3ToGeoPoint(
+        latLonToVector3(point).applyQuaternion(
+          createDisplayGlobeQuaternion(rotatedOrientation),
+        ),
+      ),
+      frame,
+    )
+
+    expect(expectedRaw.visible).toBe(true)
+    expect(screenPoint).not.toBeNull()
+
+    const expectedScreen = scene.rawToScreen(expectedRaw)
+
+    expect(screenPoint!.x).toBeCloseTo(expectedScreen.x, 5)
+    expect(screenPoint!.y).toBeCloseTo(expectedScreen.y, 5)
   })
 
   it('keeps the Mercator frame bounds stable when the projection frame rotates', () => {

@@ -2,7 +2,7 @@ import { Vector2, Vector3 } from 'three'
 import { baseMapMesh } from './mesh'
 import {
   barycentricWeights,
-  createNoRollQuaternion,
+  createDisplayGlobeQuaternion,
   interpolateGeoPoint,
   latLonToVector3,
   vector3ToGeoPoint,
@@ -315,7 +315,7 @@ function buildGraticuleLines(
 ) {
   const lines: Vector2[][] = []
   const maxJump = Math.max(size.width, size.height) * 0.32
-  const globeQuaternion = createNoRollQuaternion(globeOrientation)
+  const globeQuaternion = createDisplayGlobeQuaternion(globeOrientation)
 
   for (const rawLine of baseMapMesh.graticuleLines) {
     let current: Vector2[] = []
@@ -384,7 +384,7 @@ export function buildMapScene(
   globeOrientation: GlobeOrientation,
   size: Size,
 ) {
-  const globeQuaternion = createNoRollQuaternion(globeOrientation)
+  const globeQuaternion = createDisplayGlobeQuaternion(globeOrientation)
   const rawFrameOutline = getProjectionFrameOutline(projection)
   const rawVertices: RawVertexProjection[] = baseMapMesh.vertices.map((vertex) => {
     const rotatedVector = vertex.vector.clone().applyQuaternion(globeQuaternion)

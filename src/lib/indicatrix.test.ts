@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { analyzeIndicatrixAtPoint } from './indicatrix'
-import { getProjectionDefinition } from './projections'
+import {
+  createDisplayGlobeQuaternion,
+  latLonToVector3,
+  vector3ToGeoPoint,
+} from './math'
+import { getProjectionDefinition, projectGeoPoint } from './projections'
 
 const defaultFrame = {
   centralLonDeg: 0,
@@ -55,5 +60,35 @@ describe('local indicatrix metrics', () => {
     expect(analysis?.metrics.majorScale).toBeGreaterThan(1.9)
     expect(analysis?.metrics.minorScale).toBeLessThan(0.55)
     expect(analysis?.metrics.eccentricity).toBeGreaterThan(0.95)
+  })
+
+  it('centers the indicatrix on the displayed globe pose for rotated maps', () => {
+    const projection = getProjectionDefinition('mercator')
+    const orientation = {
+      azimuthDeg: 30,
+      elevationDeg: 20,
+      rollDeg: 10,
+    }
+    const point = { latDeg: 0, lonDeg: 0 }
+    const analysis = analyzeIndicatrixAtPoint(
+      projection,
+      defaultFrame,
+      orientation,
+      point,
+    )
+    const expected = projectGeoPoint(
+      projection,
+      vector3ToGeoPoint(
+        latLonToVector3(point).applyQuaternion(
+          createDisplayGlobeQuaternion(orientation),
+        ),
+      ),
+      defaultFrame,
+    )
+
+    expect(analysis).not.toBeNull()
+    expect(expected.visible).toBe(true)
+    expect(analysis?.centerRaw.x).toBeCloseTo(expected.x, 5)
+    expect(analysis?.centerRaw.y).toBeCloseTo(expected.y, 5)
   })
 })

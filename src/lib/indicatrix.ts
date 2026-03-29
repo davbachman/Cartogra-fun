@@ -1,7 +1,7 @@
 import { Vector2, Vector3 } from 'three'
 import {
   clamp,
-  createNoRollQuaternion,
+  createDisplayGlobeQuaternion,
   degToRad,
   EPSILON,
   latLonToVector3,
@@ -86,7 +86,7 @@ function createProjectedPointGetter(
   frame: ProjectionFrame,
   globeOrientation: GlobeOrientation,
 ) {
-  const globeQuaternion = createNoRollQuaternion(globeOrientation)
+  const globeQuaternion = createDisplayGlobeQuaternion(globeOrientation)
 
   return (point: GeoPoint) => {
     const rotatedPoint = vector3ToGeoPoint(
