@@ -309,7 +309,12 @@ export default function ProjectionVisualizationSurface({
 
       {model.graticulePositions.length > 0 ? (
         <lineSegments geometry={graticuleGeometry} renderOrder={4} frustumCulled={false}>
-          <lineBasicMaterial color="#f7f8fb" toneMapped={false} />
+          <lineBasicMaterial
+            color="#c9d7e4"
+            transparent
+            opacity={0.58}
+            toneMapped={false}
+          />
         </lineSegments>
       ) : null}
 
@@ -365,7 +370,8 @@ export default function ProjectionVisualizationSurface({
         <ProjectionRay
           start={model.selectionRay.start}
           end={model.selectionRay.end}
-          color="#ffd27c"
+          color="#fff1b8"
+          opacity={1}
         />
       ) : null}
       {model.selectionSurfacePoint ? (
