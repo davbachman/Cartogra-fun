@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Vector2 } from 'three'
+import { Euler, Quaternion, Vector2, Vector3 } from 'three'
 import { buildMapScene, pickGeoPointFromScene } from './mapScene'
 import {
   createDisplayGlobeQuaternion,
@@ -10,6 +10,40 @@ import { getProjectionDefinition, projectGeoPoint } from './projections'
 
 const size = { width: 1080, height: 720 }
 const orientation = { azimuthDeg: 0, elevationDeg: 0 }
+const defaultViewCamera = { azimuthDeg: 0, elevationDeg: -18 }
+
+function createSceneRotationQuaternion(
+  azimuthDeg: number,
+  elevationDeg: number,
+) {
+  const tilt = new Quaternion().setFromAxisAngle(
+    new Vector3(1, 0, 0),
+    (-elevationDeg * Math.PI) / 180,
+  )
+  const spin = new Quaternion().setFromAxisAngle(
+    new Vector3(0, 1, 0),
+    (-azimuthDeg * Math.PI) / 180,
+  )
+
+  return tilt.multiply(spin).normalize()
+}
+
+function extractDisplayGlobeOrientation(quaternion: Quaternion) {
+  const euler = new Euler().setFromQuaternion(quaternion, 'XYZ')
+
+  return {
+    azimuthDeg: (((( -euler.y * 180) / Math.PI) + 180) % 360 + 360) % 360 - 180,
+    elevationDeg: Math.max(-75, Math.min(75, (-euler.x * 180) / Math.PI)),
+    rollDeg: (((( (euler.z * 180) / Math.PI) + 180) % 360) + 360) % 360 - 180,
+  }
+}
+
+function getScreenPoint(vector: Vector3) {
+  const cameraZ = 4.05
+  const depth = cameraZ - vector.z
+
+  return new Vector2(vector.x / depth, vector.y / depth)
+}
 
 describe('map scene generation', () => {
   it('round-trips a selected point on the Mercator map through triangle picking', () => {
@@ -80,6 +114,118 @@ describe('map scene generation', () => {
 
     expect(screenPoint!.x).toBeCloseTo(expectedScreen.x, 5)
     expect(screenPoint!.y).toBeCloseTo(expectedScreen.y, 5)
+  })
+
+  it('keeps fixed-frame cylindrical map motion aligned with left/up globe motion', () => {
+    const projection = getProjectionDefinition('mercator')
+    const frame = { centralLonDeg: 0, centerLatDeg: 0 }
+    const currentView = createSceneRotationQuaternion(
+      defaultViewCamera.azimuthDeg,
+      defaultViewCamera.elevationDeg,
+    )
+    const fixedFrameDragDeltas = [
+      { deltaAzimuthDeg: 1, deltaElevationDeg: 0 },
+      { deltaAzimuthDeg: -1, deltaElevationDeg: 0 },
+      { deltaAzimuthDeg: 0, deltaElevationDeg: 1 },
+      { deltaAzimuthDeg: 0, deltaElevationDeg: -1 },
+      { deltaAzimuthDeg: 1, deltaElevationDeg: 1 },
+      { deltaAzimuthDeg: 1, deltaElevationDeg: -1 },
+      { deltaAzimuthDeg: -1, deltaElevationDeg: 1 },
+      { deltaAzimuthDeg: -1, deltaElevationDeg: -1 },
+    ]
+
+    for (let azimuthDeg = -60; azimuthDeg <= 60; azimuthDeg += 10) {
+      for (let elevationDeg = -45; elevationDeg <= 45; elevationDeg += 10) {
+        for (let rollDeg = 40; rollDeg <= 140; rollDeg += 10) {
+          const globeOrientation = { azimuthDeg, elevationDeg, rollDeg }
+          const globeQuaternion = createDisplayGlobeQuaternion(globeOrientation)
+          const northPoleWorld = latLonToVector3({ latDeg: 90, lonDeg: 0 })
+            .applyQuaternion(globeQuaternion)
+            .applyQuaternion(currentView)
+          const northPoleScreen = getScreenPoint(northPoleWorld)
+          let frontmostPoint: { latDeg: number; lonDeg: number } | null = null
+          let frontmostDepth = -Infinity
+
+          for (let latDeg = -90; latDeg <= 90; latDeg += 10) {
+            for (let lonDeg = -180; lonDeg <= 180; lonDeg += 10) {
+              const world = latLonToVector3({ latDeg, lonDeg })
+                .applyQuaternion(globeQuaternion)
+                .applyQuaternion(currentView)
+
+              if (world.z > frontmostDepth) {
+                frontmostDepth = world.z
+                frontmostPoint = { latDeg, lonDeg }
+              }
+            }
+          }
+
+          if (
+            !frontmostPoint ||
+            Math.abs(frontmostPoint.latDeg) > 25 ||
+            northPoleScreen.x >= -0.1 ||
+            frontmostDepth <= 0.9
+          ) {
+            continue
+          }
+
+          const baseScreenPoint = getScreenPoint(
+            latLonToVector3(frontmostPoint)
+              .applyQuaternion(globeQuaternion)
+              .applyQuaternion(currentView),
+          )
+          const baseProjected = projectGeoPoint(
+            projection,
+            vector3ToGeoPoint(
+              latLonToVector3(frontmostPoint).applyQuaternion(globeQuaternion),
+            ),
+            frame,
+          )
+
+          expect(baseProjected.visible).toBe(true)
+
+          for (const dragDelta of fixedFrameDragDeltas) {
+            const nextView = createSceneRotationQuaternion(
+              defaultViewCamera.azimuthDeg + dragDelta.deltaAzimuthDeg,
+              defaultViewCamera.elevationDeg + dragDelta.deltaElevationDeg,
+            )
+            const nextGlobeQuaternion = currentView
+              .clone()
+              .invert()
+              .multiply(nextView)
+              .multiply(globeQuaternion)
+            const nextOrientation = extractDisplayGlobeOrientation(nextGlobeQuaternion)
+            const nextDisplayQuaternion = createDisplayGlobeQuaternion(nextOrientation)
+            const nextScreenPoint = getScreenPoint(
+              latLonToVector3(frontmostPoint)
+                .applyQuaternion(nextDisplayQuaternion)
+                .applyQuaternion(currentView),
+            )
+            const nextProjected = projectGeoPoint(
+              projection,
+              vector3ToGeoPoint(
+                latLonToVector3(frontmostPoint).applyQuaternion(nextDisplayQuaternion),
+              ),
+              frame,
+            )
+
+            expect(nextProjected.visible).toBe(true)
+
+            const screenDx = nextScreenPoint.x - baseScreenPoint.x
+            const screenDy = nextScreenPoint.y - baseScreenPoint.y
+            const mapDx = nextProjected.x - baseProjected.x
+            const mapDy = nextProjected.y - baseProjected.y
+
+            if (screenDx < -1e-4) {
+              expect(mapDx).not.toBeGreaterThan(1e-4)
+            }
+
+            if (screenDy > 1e-4) {
+              expect(mapDy).not.toBeLessThan(-1e-4)
+            }
+          }
+        }
+      }
+    }
   })
 
   it('keeps the Mercator frame bounds stable when the projection frame rotates', () => {
