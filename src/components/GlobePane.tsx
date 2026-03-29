@@ -21,6 +21,9 @@ import {
   SRGBColorSpace,
   Vector3,
 } from 'three'
+import LayeredWideLineSegments, {
+  type WideLineLayer,
+} from './LayeredWideLineSegments'
 import { IndicatrixMetrics } from './IndicatrixMetrics'
 import {
   getEarthTextureCanvas,
@@ -76,6 +79,11 @@ const GLOBE_CAMERA_DISTANCE = 4.05
 const GLOBE_CAMERA_FOV = 30
 const PROJECTION_ROTATION_DEG_PER_PIXEL = 0.3
 const GEODESIC_MAP_SCENE_SIZE = { width: 1280, height: 720 }
+const GEODESIC_LINE_LAYERS: readonly WideLineLayer[] = [
+  { color: '#110904', linewidth: 5, opacity: 0.62 },
+  { color: '#ffba5d', linewidth: 2.35, opacity: 0.96 },
+  { color: '#fff5da', linewidth: 1.05, opacity: 0.95 },
+]
 const LazyProjectionVisualizationSurface = lazy(
   () => import('./ProjectionVisualizationSurface'),
 )
@@ -178,28 +186,6 @@ function createIndicatrixOutlineGeometry(boundaryPositions: number[][]) {
   return geometry
 }
 
-function createCurveSegmentGeometry(boundaryPositions: number[][]) {
-  const geometry = new BufferGeometry()
-  const positions = new Float32Array(Math.max(0, (boundaryPositions.length - 1) * 6))
-
-  for (let index = 1; index < boundaryPositions.length; index += 1) {
-    const offset = (index - 1) * 6
-    const start = boundaryPositions[index - 1]
-    const end = boundaryPositions[index]
-
-    positions[offset] = start[0]
-    positions[offset + 1] = start[1]
-    positions[offset + 2] = start[2]
-    positions[offset + 3] = end[0]
-    positions[offset + 4] = end[1]
-    positions[offset + 5] = end[2]
-  }
-
-  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
-
-  return geometry
-}
-
 function GlobeMarker({ point }: { point: { latDeg: number; lonDeg: number } }) {
   const position = useMemo(() => {
     const lifted = latLonToVector3(point, GLOBE_CURVE_RADIUS)
@@ -226,26 +212,30 @@ function GlobeCurveSegment({
   points: Array<{ latDeg: number; lonDeg: number }>
 }) {
   const positions = useMemo(() => {
-    return points.map((point) => {
-      const lifted = latLonToVector3(point, GLOBE_CURVE_RADIUS)
+    const segmentPositions = new Float32Array(Math.max(0, (points.length - 1) * 6))
 
-      return [lifted.x, lifted.y, lifted.z]
-    })
-  }, [points])
-  const geometry = useMemo(() => {
-    return createCurveSegmentGeometry(positions)
-  }, [positions])
+    for (let index = 1; index < points.length; index += 1) {
+      const start = latLonToVector3(points[index - 1], GLOBE_CURVE_RADIUS)
+      const end = latLonToVector3(points[index], GLOBE_CURVE_RADIUS)
+      const offset = (index - 1) * 6
 
-  useEffect(() => {
-    return () => {
-      geometry.dispose()
+      segmentPositions[offset] = start.x
+      segmentPositions[offset + 1] = start.y
+      segmentPositions[offset + 2] = start.z
+      segmentPositions[offset + 3] = end.x
+      segmentPositions[offset + 4] = end.y
+      segmentPositions[offset + 5] = end.z
     }
-  }, [geometry])
+
+    return segmentPositions
+  }, [points])
 
   return (
-    <lineSegments geometry={geometry} renderOrder={8}>
-      <lineBasicMaterial color="#fff1b8" transparent opacity={1} toneMapped={false} />
-    </lineSegments>
+    <LayeredWideLineSegments
+      positions={positions}
+      layers={GEODESIC_LINE_LAYERS}
+      renderOrder={8}
+    />
   )
 }
 

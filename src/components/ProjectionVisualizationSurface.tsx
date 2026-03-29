@@ -6,6 +6,9 @@ import {
   DynamicDrawUsage,
   Float32BufferAttribute,
 } from 'three'
+import LayeredWideLineSegments, {
+  type WideLineLayer,
+} from './LayeredWideLineSegments'
 import {
   buildProjectionVisualizationModel,
   type ProjectionVisualizationModel,
@@ -26,6 +29,12 @@ type ProjectionVisualizationSurfaceProps = {
   geodesicSelection: GeodesicSelection | null
   globeCurveSegments: GeoPoint[][]
 }
+
+const GEODESIC_LINE_LAYERS: readonly WideLineLayer[] = [
+  { color: '#110904', linewidth: 5, opacity: 0.62 },
+  { color: '#ffba5d', linewidth: 2.35, opacity: 0.96 },
+  { color: '#fff5da', linewidth: 1.05, opacity: 0.95 },
+]
 
 function createCurveSegmentGeometry(boundaryPositions: number[][]) {
   const geometry = new BufferGeometry()
@@ -319,14 +328,11 @@ export default function ProjectionVisualizationSurface({
       ) : null}
 
       {model.curveSurfacePositions.length > 0 ? (
-        <lineSegments geometry={curveGeometry} renderOrder={10} frustumCulled={false}>
-          <lineBasicMaterial
-            color="#fff1b8"
-            transparent
-            opacity={1}
-            toneMapped={false}
-          />
-        </lineSegments>
+        <LayeredWideLineSegments
+          positions={model.curveSurfacePositions}
+          layers={GEODESIC_LINE_LAYERS}
+          renderOrder={10}
+        />
       ) : null}
       {model.curveSurfaceEndpoints.map((point, index) => (
         <ProjectionMarker
