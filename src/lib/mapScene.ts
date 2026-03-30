@@ -1,9 +1,11 @@
-import { Vector2, Vector3 } from 'three'
+import { Quaternion, Vector2, Vector3 } from 'three'
 import { baseMapMesh } from './mesh'
 import {
   barycentricWeights,
   createDisplayGlobeQuaternion,
+  getLocalFrame,
   interpolateGeoPoint,
+  latLonToVector3,
   rotateGeoPoint,
   vector3ToGeoPoint,
 } from './math'
@@ -44,6 +46,10 @@ export interface MapScene {
 }
 
 const EDGE_CLIP_STEPS = 18
+const CONIC_POLAR_CLIP_RAD = 0.015
+const CONIC_TRIANGLE_MAX_SUBDIVISION_DEPTH = 4
+const CONIC_TRIANGLE_MAX_AREA_FACTOR = 0.0015
+const CONIC_TRIANGLE_MAX_EDGE_FACTOR = 0.18
 
 function hasProjectionDiscontinuity(vertices: RawVertexProjection[]) {
   const regionIds = vertices
@@ -93,19 +99,40 @@ function interpolateUnitVector(start: Vector3, end: Vector3, t: number) {
   return blended.normalize()
 }
 
+function createProjectedVertex(
+  projection: ProjectionDefinition,
+  frame: ProjectionFrame,
+  globeQuaternion: Quaternion,
+  sourceVector: Vector3,
+): RawVertexProjection {
+  const sourceGeo = vector3ToGeoPoint(sourceVector)
+  const rotatedGeo = rotateGeoPoint(sourceGeo, globeQuaternion)
+  const projected = projectGeoPoint(projection, rotatedGeo, frame)
+  const local = getLocalFrame(rotatedGeo, frame)
+
+  return {
+    ...projected,
+    visible:
+      projected.visible &&
+      !(
+        projection.family === 'Conic' &&
+        Math.abs(local.localLat) >= Math.PI * 0.5 - CONIC_POLAR_CLIP_RAD
+      ),
+    sourceGeo,
+    sourceVector,
+    rotatedVector: sourceVector.clone().applyQuaternion(globeQuaternion),
+  }
+}
+
 function projectVertexFromVectors(
   projection: ProjectionDefinition,
   frame: ProjectionFrame,
+  globeQuaternion: Quaternion,
   sourceVector: Vector3,
   rotatedVector: Vector3,
 ): RawVertexProjection {
-  const sourceGeo = vector3ToGeoPoint(sourceVector)
-  const rotatedGeo = vector3ToGeoPoint(rotatedVector)
-
   return {
-    ...projectGeoPoint(projection, rotatedGeo, frame),
-    sourceGeo,
-    sourceVector,
+    ...createProjectedVertex(projection, frame, globeQuaternion, sourceVector),
     rotatedVector,
   }
 }
@@ -113,6 +140,7 @@ function projectVertexFromVectors(
 function bisectVisibleEdge(
   projection: ProjectionDefinition,
   frame: ProjectionFrame,
+  globeQuaternion: Quaternion,
   inside: RawVertexProjection,
   outside: RawVertexProjection,
 ) {
@@ -135,6 +163,7 @@ function bisectVisibleEdge(
     const candidate = projectVertexFromVectors(
       projection,
       frame,
+      globeQuaternion,
       sourceVector,
       rotatedVector,
     )
@@ -153,6 +182,7 @@ function bisectVisibleEdge(
 function clipTriangleToVisibleRegion(
   projection: ProjectionDefinition,
   frame: ProjectionFrame,
+  globeQuaternion: Quaternion,
   vertices: [RawVertexProjection, RawVertexProjection, RawVertexProjection],
 ) {
   const clipped: RawVertexProjection[] = []
@@ -161,12 +191,28 @@ function clipTriangleToVisibleRegion(
   for (const current of vertices) {
     if (current.visible) {
       if (!previous.visible) {
-        clipped.push(bisectVisibleEdge(projection, frame, current, previous))
+        clipped.push(
+          bisectVisibleEdge(
+            projection,
+            frame,
+            globeQuaternion,
+            current,
+            previous,
+          ),
+        )
       }
 
       clipped.push(current)
     } else if (previous.visible) {
-      clipped.push(bisectVisibleEdge(projection, frame, previous, current))
+      clipped.push(
+        bisectVisibleEdge(
+          projection,
+          frame,
+          globeQuaternion,
+          previous,
+          current,
+        ),
+      )
     }
 
     previous = current
@@ -306,6 +352,150 @@ function toScreenCoordinates(
   }
 }
 
+function measureTriangleOnScreen(
+  vertices: [RawVertexProjection, RawVertexProjection, RawVertexProjection],
+  fit: ReturnType<typeof createFit>,
+) {
+  const screenVertices = vertices.map((vertex) =>
+    toScreenCoordinates(vertex, fit),
+  ) as [
+    ScreenVertexProjection,
+    ScreenVertexProjection,
+    ScreenVertexProjection,
+  ]
+  const edgeLengths = [
+    Math.hypot(
+      screenVertices[0].screenX - screenVertices[1].screenX,
+      screenVertices[0].screenY - screenVertices[1].screenY,
+    ),
+    Math.hypot(
+      screenVertices[1].screenX - screenVertices[2].screenX,
+      screenVertices[1].screenY - screenVertices[2].screenY,
+    ),
+    Math.hypot(
+      screenVertices[2].screenX - screenVertices[0].screenX,
+      screenVertices[2].screenY - screenVertices[0].screenY,
+    ),
+  ]
+  const twiceArea =
+    (screenVertices[1].screenX - screenVertices[0].screenX) *
+      (screenVertices[2].screenY - screenVertices[0].screenY) -
+    (screenVertices[1].screenY - screenVertices[0].screenY) *
+      (screenVertices[2].screenX - screenVertices[0].screenX)
+
+  return {
+    screenVertices,
+    area: Math.abs(twiceArea) * 0.5,
+    maxEdgeLength: Math.max(...edgeLengths),
+  }
+}
+
+function appendAdaptiveConicTriangle(
+  projection: ProjectionDefinition,
+  frame: ProjectionFrame,
+  globeQuaternion: Quaternion,
+  fit: ReturnType<typeof createFit>,
+  vertices: [RawVertexProjection, RawVertexProjection, RawVertexProjection],
+  depth: number,
+  maxTriangleArea: number,
+  maxEdgeLength: number,
+  triangles: MapSceneTriangle[],
+) {
+  const discontinuous = hasProjectionDiscontinuity(vertices)
+  const metrics = measureTriangleOnScreen(vertices, fit)
+  const shouldSubdivide =
+    depth < CONIC_TRIANGLE_MAX_SUBDIVISION_DEPTH &&
+    (discontinuous ||
+      metrics.area > maxTriangleArea ||
+      metrics.maxEdgeLength > maxEdgeLength)
+
+  if (shouldSubdivide) {
+    const midpoint01 = createProjectedVertex(
+      projection,
+      frame,
+      globeQuaternion,
+      interpolateUnitVector(vertices[0].sourceVector, vertices[1].sourceVector, 0.5),
+    )
+    const midpoint12 = createProjectedVertex(
+      projection,
+      frame,
+      globeQuaternion,
+      interpolateUnitVector(vertices[1].sourceVector, vertices[2].sourceVector, 0.5),
+    )
+    const midpoint20 = createProjectedVertex(
+      projection,
+      frame,
+      globeQuaternion,
+      interpolateUnitVector(vertices[2].sourceVector, vertices[0].sourceVector, 0.5),
+    )
+
+    appendAdaptiveConicTriangle(
+      projection,
+      frame,
+      globeQuaternion,
+      fit,
+      [vertices[0], midpoint01, midpoint20],
+      depth + 1,
+      maxTriangleArea,
+      maxEdgeLength,
+      triangles,
+    )
+    appendAdaptiveConicTriangle(
+      projection,
+      frame,
+      globeQuaternion,
+      fit,
+      [midpoint01, vertices[1], midpoint12],
+      depth + 1,
+      maxTriangleArea,
+      maxEdgeLength,
+      triangles,
+    )
+    appendAdaptiveConicTriangle(
+      projection,
+      frame,
+      globeQuaternion,
+      fit,
+      [midpoint20, midpoint12, vertices[2]],
+      depth + 1,
+      maxTriangleArea,
+      maxEdgeLength,
+      triangles,
+    )
+    appendAdaptiveConicTriangle(
+      projection,
+      frame,
+      globeQuaternion,
+      fit,
+      [midpoint01, midpoint12, midpoint20],
+      depth + 1,
+      maxTriangleArea,
+      maxEdgeLength,
+      triangles,
+    )
+
+    return
+  }
+
+  if (discontinuous) {
+    return
+  }
+
+  triangles.push({
+    points: [
+      new Vector2(metrics.screenVertices[0].screenX, metrics.screenVertices[0].screenY),
+      new Vector2(metrics.screenVertices[1].screenX, metrics.screenVertices[1].screenY),
+      new Vector2(metrics.screenVertices[2].screenX, metrics.screenVertices[2].screenY),
+    ],
+    texturePoints: [
+      createTexturePoint(vertices[0].sourceGeo),
+      createTexturePoint(vertices[1].sourceGeo),
+      createTexturePoint(vertices[2].sourceGeo),
+    ],
+    vectors: [vertices[0].sourceVector, vertices[1].sourceVector, vertices[2].sourceVector],
+  })
+}
+
 function buildGraticuleLines(
   projection: ProjectionDefinition,
   frame: ProjectionFrame,
@@ -322,10 +512,11 @@ function buildGraticuleLines(
     let previous: ScreenVertexProjection | null = null
 
     for (const point of rawLine) {
-      const projected = projectGeoPoint(
+      const projected = createProjectedVertex(
         projection,
-        rotateGeoPoint(point, globeQuaternion),
         frame,
+        globeQuaternion,
+        latLonToVector3(point),
       )
 
       if (!projected.visible) {
@@ -388,18 +579,12 @@ export function buildMapScene(
   const globeQuaternion = createDisplayGlobeQuaternion(globeOrientation)
   const rawFrameOutline = getProjectionFrameOutline(projection)
   const rawVertices: RawVertexProjection[] = baseMapMesh.vertices.map((vertex) => {
-    const rotatedVector = vertex.vector.clone().applyQuaternion(globeQuaternion)
-
-    return {
-      ...projectGeoPoint(
-        projection,
-        rotateGeoPoint(vertex.geo, globeQuaternion),
-        frame,
-      ),
-      sourceGeo: vertex.geo,
-      sourceVector: vertex.vector,
-      rotatedVector,
-    }
+    return createProjectedVertex(
+      projection,
+      frame,
+      globeQuaternion,
+      vertex.vector,
+    )
   })
   const fit = createFit(rawVertices, size, rawFrameOutline)
   const screenVertices = rawVertices.map((vertex) => toScreenCoordinates(vertex, fit))
@@ -412,6 +597,9 @@ export function buildMapScene(
         ),
     ) ?? null
   const triangles: MapSceneTriangle[] = []
+  const maxTriangleArea = size.width * size.height * CONIC_TRIANGLE_MAX_AREA_FACTOR
+  const maxEdgeLength =
+    Math.max(size.width, size.height) * CONIC_TRIANGLE_MAX_EDGE_FACTOR
 
   for (const triangle of baseMapMesh.triangles) {
     const a = screenVertices[triangle.indices[0]]
@@ -422,34 +610,52 @@ export function buildMapScene(
       b,
       c,
     ]
-    const clippedTriangles = rawFrameOutline
-      ? clipTriangleToVisibleRegion(projection, frame, vertices)
-      : isTriangleContinuous(vertices)
+    const allVisible = vertices.every((vertex) => vertex.visible)
+    const clippedTriangles =
+      projection.family === 'Conic' && allVisible
         ? [vertices]
-        : []
+        : rawFrameOutline
+          ? clipTriangleToVisibleRegion(projection, frame, globeQuaternion, vertices)
+          : isTriangleContinuous(vertices)
+            ? [vertices]
+            : []
 
     for (const clippedTriangle of clippedTriangles) {
-      const [first, second, third] = clippedTriangle.map((vertex) =>
-        toScreenCoordinates(vertex, fit),
-      ) as [
-        ScreenVertexProjection,
-        ScreenVertexProjection,
-        ScreenVertexProjection,
-      ]
+      if (projection.family === 'Conic') {
+        appendAdaptiveConicTriangle(
+          projection,
+          frame,
+          globeQuaternion,
+          fit,
+          clippedTriangle,
+          0,
+          maxTriangleArea,
+          maxEdgeLength,
+          triangles,
+        )
+      } else {
+        const [first, second, third] = clippedTriangle.map((vertex) =>
+          toScreenCoordinates(vertex, fit),
+        ) as [
+          ScreenVertexProjection,
+          ScreenVertexProjection,
+          ScreenVertexProjection,
+        ]
 
-      triangles.push({
-        points: [
-          new Vector2(first.screenX, first.screenY),
-          new Vector2(second.screenX, second.screenY),
-          new Vector2(third.screenX, third.screenY),
-        ],
-        texturePoints: [
-          createTexturePoint(first.sourceGeo),
-          createTexturePoint(second.sourceGeo),
-          createTexturePoint(third.sourceGeo),
-        ],
-        vectors: [first.sourceVector, second.sourceVector, third.sourceVector],
-      })
+        triangles.push({
+          points: [
+            new Vector2(first.screenX, first.screenY),
+            new Vector2(second.screenX, second.screenY),
+            new Vector2(third.screenX, third.screenY),
+          ],
+          texturePoints: [
+            createTexturePoint(first.sourceGeo),
+            createTexturePoint(second.sourceGeo),
+            createTexturePoint(third.sourceGeo),
+          ],
+          vectors: [first.sourceVector, second.sourceVector, third.sourceVector],
+        })
+      }
     }
   }
 
@@ -478,10 +684,11 @@ export function buildMapScene(
       )
     },
     projectGeoToScreen(point: GeoPoint) {
-      const projected = projectGeoPoint(
+      const projected = createProjectedVertex(
         projection,
-        rotateGeoPoint(point, globeQuaternion),
         frame,
+        globeQuaternion,
+        latLonToVector3(point),
       )
 
       if (!projected.visible) {
