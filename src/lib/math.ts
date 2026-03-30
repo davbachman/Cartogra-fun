@@ -2,6 +2,8 @@ import { Euler, Quaternion, Vector2, Vector3 } from 'three'
 import type { GeoPoint, GlobeOrientation, ProjectionFrame } from './types'
 
 export const EPSILON = 1e-6
+const POLAR_PLANAR_EPSILON = 1e-12
+const POLE_LONGITUDE_HINT_DELTA_DEG = 0.05
 
 export function degToRad(value: number) {
   return (value * Math.PI) / 180
@@ -45,6 +47,41 @@ export function vector3ToGeoPoint(vector: Vector3): GeoPoint {
   return {
     latDeg: radToDeg(Math.asin(clamp(normalized.y, -1, 1))),
     lonDeg: wrapLongitudeDeg(radToDeg(Math.atan2(-normalized.z, normalized.x))),
+  }
+}
+
+export function rotateGeoPoint(
+  point: GeoPoint,
+  quaternion: Quaternion,
+): GeoPoint {
+  const rotatedVector = latLonToVector3(point).applyQuaternion(quaternion)
+  const rotatedPoint = vector3ToGeoPoint(rotatedVector)
+
+  if (
+    rotatedVector.x * rotatedVector.x + rotatedVector.z * rotatedVector.z >=
+    POLAR_PLANAR_EPSILON
+  ) {
+    return rotatedPoint
+  }
+
+  const hintedLatitude = clamp(
+    point.latDeg +
+      (point.latDeg >= 0
+        ? -POLE_LONGITUDE_HINT_DELTA_DEG
+        : POLE_LONGITUDE_HINT_DELTA_DEG),
+    -89.999,
+    89.999,
+  )
+  const hintedRotatedPoint = vector3ToGeoPoint(
+    latLonToVector3({
+      latDeg: hintedLatitude,
+      lonDeg: point.lonDeg,
+    }).applyQuaternion(quaternion),
+  )
+
+  return {
+    latDeg: rotatedPoint.latDeg,
+    lonDeg: hintedRotatedPoint.lonDeg,
   }
 }
 

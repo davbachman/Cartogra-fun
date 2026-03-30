@@ -4,7 +4,7 @@ import {
   barycentricWeights,
   createDisplayGlobeQuaternion,
   interpolateGeoPoint,
-  latLonToVector3,
+  rotateGeoPoint,
   vector3ToGeoPoint,
 } from './math'
 import { getProjectionFrameOutline, projectGeoPoint } from './projections'
@@ -322,10 +322,11 @@ function buildGraticuleLines(
     let previous: ScreenVertexProjection | null = null
 
     for (const point of rawLine) {
-      const rotatedPoint = vector3ToGeoPoint(
-        latLonToVector3(point).applyQuaternion(globeQuaternion),
+      const projected = projectGeoPoint(
+        projection,
+        rotateGeoPoint(point, globeQuaternion),
+        frame,
       )
-      const projected = projectGeoPoint(projection, rotatedPoint, frame)
 
       if (!projected.visible) {
         if (current.length > 1) {
@@ -390,7 +391,11 @@ export function buildMapScene(
     const rotatedVector = vertex.vector.clone().applyQuaternion(globeQuaternion)
 
     return {
-      ...projectGeoPoint(projection, vector3ToGeoPoint(rotatedVector), frame),
+      ...projectGeoPoint(
+        projection,
+        rotateGeoPoint(vertex.geo, globeQuaternion),
+        frame,
+      ),
       sourceGeo: vertex.geo,
       sourceVector: vertex.vector,
       rotatedVector,
@@ -473,10 +478,11 @@ export function buildMapScene(
       )
     },
     projectGeoToScreen(point: GeoPoint) {
-      const rotatedPoint = vector3ToGeoPoint(
-        latLonToVector3(point).applyQuaternion(globeQuaternion),
+      const projected = projectGeoPoint(
+        projection,
+        rotateGeoPoint(point, globeQuaternion),
+        frame,
       )
-      const projected = projectGeoPoint(projection, rotatedPoint, frame)
 
       if (!projected.visible) {
         return null
