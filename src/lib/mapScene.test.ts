@@ -45,6 +45,13 @@ function getScreenPoint(vector: Vector3) {
   return new Vector2(vector.x / depth, vector.y / depth)
 }
 
+function getTriangleArea(points: [Vector2, Vector2, Vector2]) {
+  return Math.abs(
+    (points[1].x - points[0].x) * (points[2].y - points[0].y) -
+      (points[1].y - points[0].y) * (points[2].x - points[0].x),
+  ) * 0.5
+}
+
 describe('map scene generation', () => {
   it('round-trips a selected point on the Mercator map through triangle picking', () => {
     const projection = getProjectionDefinition('mercator')
@@ -86,7 +93,7 @@ describe('map scene generation', () => {
     expect(rotated!.y).not.toBeCloseTo(centered!.y, 1)
   })
 
-  it('keeps the Albers south-pole arc spread across meridians', () => {
+  it('keeps the Albers near-south-pole arc spread across meridians', () => {
     const projection = getProjectionDefinition('albers-equal-area')
     const scene = buildMapScene(
       projection,
@@ -94,9 +101,9 @@ describe('map scene generation', () => {
       orientation,
       size,
     )
-    const west = scene.projectGeoToScreen({ latDeg: -90, lonDeg: -120 })
-    const center = scene.projectGeoToScreen({ latDeg: -90, lonDeg: 0 })
-    const east = scene.projectGeoToScreen({ latDeg: -90, lonDeg: 120 })
+    const west = scene.projectGeoToScreen({ latDeg: -88, lonDeg: -120 })
+    const center = scene.projectGeoToScreen({ latDeg: -88, lonDeg: 0 })
+    const east = scene.projectGeoToScreen({ latDeg: -88, lonDeg: 120 })
 
     expect(west).not.toBeNull()
     expect(center).not.toBeNull()
@@ -107,7 +114,7 @@ describe('map scene generation', () => {
     expect(Math.abs(east!.x - center!.x)).toBeGreaterThan(40)
   })
 
-  it('rotates the Albers south-pole arc with globe azimuth', () => {
+  it('rotates the Albers near-south-pole arc with globe azimuth', () => {
     const projection = getProjectionDefinition('albers-equal-area')
     const centeredScene = buildMapScene(
       projection,
@@ -121,13 +128,28 @@ describe('map scene generation', () => {
       { azimuthDeg: 45, elevationDeg: 0 },
       size,
     )
-    const centeredPoint = centeredScene.projectGeoToScreen({ latDeg: -90, lonDeg: -45 })
-    const rotatedPoint = rotatedScene.projectGeoToScreen({ latDeg: -90, lonDeg: 0 })
+    const centeredPoint = centeredScene.projectGeoToScreen({ latDeg: -88, lonDeg: -45 })
+    const rotatedPoint = rotatedScene.projectGeoToScreen({ latDeg: -88, lonDeg: 0 })
 
     expect(centeredPoint).not.toBeNull()
     expect(rotatedPoint).not.toBeNull()
     expect(rotatedPoint!.x).toBeCloseTo(centeredPoint!.x, 1)
     expect(rotatedPoint!.y).toBeCloseTo(centeredPoint!.y, 1)
+  })
+
+  it('avoids giant tilted Albers triangles near rotated poles', () => {
+    const projection = getProjectionDefinition('albers-equal-area')
+    const scene = buildMapScene(
+      projection,
+      { centralLonDeg: 0, centerLatDeg: 0 },
+      { azimuthDeg: 0, elevationDeg: -20, rollDeg: 0 },
+      size,
+    )
+    const maxTriangleArea = scene.triangles.reduce((maxArea, triangle) => {
+      return Math.max(maxArea, getTriangleArea(triangle.points))
+    }, 0)
+
+    expect(maxTriangleArea).toBeLessThan(2000)
   })
 
   it('projects rotated globe points from the displayed globe pose', () => {
