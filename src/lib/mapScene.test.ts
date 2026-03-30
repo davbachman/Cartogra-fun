@@ -86,6 +86,50 @@ describe('map scene generation', () => {
     expect(rotated!.y).not.toBeCloseTo(centered!.y, 1)
   })
 
+  it('keeps the Albers south-pole arc spread across meridians', () => {
+    const projection = getProjectionDefinition('albers-equal-area')
+    const scene = buildMapScene(
+      projection,
+      { centralLonDeg: 0, centerLatDeg: 0 },
+      orientation,
+      size,
+    )
+    const west = scene.projectGeoToScreen({ latDeg: -90, lonDeg: -120 })
+    const center = scene.projectGeoToScreen({ latDeg: -90, lonDeg: 0 })
+    const east = scene.projectGeoToScreen({ latDeg: -90, lonDeg: 120 })
+
+    expect(west).not.toBeNull()
+    expect(center).not.toBeNull()
+    expect(east).not.toBeNull()
+    expect(west!.x).toBeLessThan(center!.x)
+    expect(east!.x).toBeGreaterThan(center!.x)
+    expect(Math.abs(west!.x - center!.x)).toBeGreaterThan(40)
+    expect(Math.abs(east!.x - center!.x)).toBeGreaterThan(40)
+  })
+
+  it('rotates the Albers south-pole arc with globe azimuth', () => {
+    const projection = getProjectionDefinition('albers-equal-area')
+    const centeredScene = buildMapScene(
+      projection,
+      { centralLonDeg: 0, centerLatDeg: 0 },
+      orientation,
+      size,
+    )
+    const rotatedScene = buildMapScene(
+      projection,
+      { centralLonDeg: 0, centerLatDeg: 0 },
+      { azimuthDeg: 45, elevationDeg: 0 },
+      size,
+    )
+    const centeredPoint = centeredScene.projectGeoToScreen({ latDeg: -90, lonDeg: -45 })
+    const rotatedPoint = rotatedScene.projectGeoToScreen({ latDeg: -90, lonDeg: 0 })
+
+    expect(centeredPoint).not.toBeNull()
+    expect(rotatedPoint).not.toBeNull()
+    expect(rotatedPoint!.x).toBeCloseTo(centeredPoint!.x, 1)
+    expect(rotatedPoint!.y).toBeCloseTo(centeredPoint!.y, 1)
+  })
+
   it('projects rotated globe points from the displayed globe pose', () => {
     const projection = getProjectionDefinition('mercator')
     const frame = { centralLonDeg: 0, centerLatDeg: 0 }
