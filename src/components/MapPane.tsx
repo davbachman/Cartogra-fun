@@ -7,23 +7,19 @@ import {
 import { Vector2 } from 'three'
 import { IndicatrixMetrics } from './IndicatrixMetrics'
 import { buildMapScene, pickGeoPointFromScene, type MapScene } from '../lib/mapScene'
+import { buildMapGeodesicOverlay } from '../lib/mapGeodesicOverlay'
 import {
   getEarthTextureCanvas,
   useEarthTextureVersion,
   type EarthTextureRequest,
 } from '../lib/earthTexture'
 import {
-  sampleGeodesicArc,
-  sampleScreenLine,
-  splitProjectedGeoPath,
-} from '../lib/geodesic'
-import {
   analyzeIndicatrixAtPoint,
   sampleGeodesicCircleBoundary,
   sampleMapIndicatrixBoundary,
 } from '../lib/indicatrix'
 import { createMapBasemapRenderer, type MapBasemapRenderer } from '../lib/mapWebGlRenderer'
-import type { GeodesicSelection, ProjectionDefinition, Size } from '../lib/types'
+import type { ProjectionDefinition, Size } from '../lib/types'
 import { useAppStore } from '../lib/store'
 import { useElementSize } from '../lib/useElementSize'
 
@@ -51,7 +47,6 @@ type PointerLikeEvent = {
 const MAP_FRAME_MASK_STROKE = 'rgba(23, 50, 74, 0.98)'
 const MAP_FRAME_EDGE_STROKE = 'rgba(220, 232, 239, 0.22)'
 const MAP_GRATICULE_STROKE = 'rgba(220, 232, 239, 0.36)'
-const PROJECTED_CURVE_MAX_JUMP_FACTOR = 0.32
 
 function traceFrameOutline(
   context: CanvasRenderingContext2D,
@@ -333,62 +328,6 @@ function drawCurveOverlay(
     context.stroke()
     context.restore()
   }
-}
-
-function buildMapGeodesicOverlay(
-  scene: MapScene,
-  size: Size,
-  geodesicSelection: GeodesicSelection | null,
-) {
-  if (!geodesicSelection || geodesicSelection.points.length === 0) {
-    return null
-  }
-
-  const endpoints = geodesicSelection.points
-    .map((point) => scene.projectGeoToScreen(point))
-    .filter((point): point is Vector2 => point !== null)
-
-  if (geodesicSelection.points.length < 2) {
-    return endpoints.length > 0
-      ? {
-          endpoints,
-          segments: [],
-        }
-      : null
-  }
-
-  if (geodesicSelection.source === 'map') {
-    if (endpoints.length < 2) {
-      return endpoints.length > 0
-        ? {
-            endpoints,
-            segments: [],
-          }
-        : null
-    }
-
-    return {
-      endpoints,
-      segments: [sampleScreenLine(endpoints[0], endpoints[1])],
-    }
-  }
-
-  const maxJump = Math.max(size.width, size.height) * PROJECTED_CURVE_MAX_JUMP_FACTOR
-  const projectedSegments = splitProjectedGeoPath(
-    scene,
-    sampleGeodesicArc(
-      geodesicSelection.points[0],
-      geodesicSelection.points[1],
-    ),
-    maxJump,
-  )
-
-  return endpoints.length > 0 || projectedSegments.length > 0
-    ? {
-        endpoints,
-        segments: projectedSegments,
-      }
-    : null
 }
 
 function drawOverlay(

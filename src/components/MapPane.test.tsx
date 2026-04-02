@@ -2,6 +2,7 @@ import { fireEvent, render, waitFor } from '@testing-library/react'
 import { Vector2 } from 'three'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MapPane } from './MapPane'
+import { buildMapGeodesicOverlay } from '../lib/mapGeodesicOverlay'
 import { getProjectionDefinition } from '../lib/projections'
 import { useAppStore } from '../lib/store'
 
@@ -123,6 +124,40 @@ describe('MapPane selection behavior', () => {
         { latDeg: 16, lonDeg: -42 },
       ],
     })
+  })
+
+  it('projects the globe geodesic for map-picked endpoints', () => {
+    const start = { latDeg: 0, lonDeg: -20 }
+    const end = { latDeg: 60, lonDeg: 20 }
+    const projectGeoToScreen = vi.fn(
+      (point: { latDeg: number; lonDeg: number }) =>
+        new Vector2(point.lonDeg * 4, point.latDeg * 4),
+    )
+    const scene = {
+      projectGeoToScreen,
+    } as unknown as Parameters<typeof buildMapGeodesicOverlay>[0]
+
+    const overlay = buildMapGeodesicOverlay(
+      scene,
+      { width: 960, height: 640 },
+      {
+        source: 'map',
+        points: [start, end],
+      },
+    )
+
+    expect(overlay).not.toBeNull()
+    expect(projectGeoToScreen.mock.calls.length).toBeGreaterThan(2)
+    expect(overlay?.segments).toHaveLength(1)
+
+    const midpoint = overlay!.segments[0][Math.floor(overlay!.segments[0].length / 2)]
+    const straightMidpoint = new Vector2().lerpVectors(
+      overlay!.endpoints[0],
+      overlay!.endpoints[1],
+      0.5,
+    )
+
+    expect(midpoint.distanceTo(straightMidpoint)).toBeGreaterThan(5)
   })
 
   it('clears the current geodesic selection when the user clicks off the projected map', async () => {

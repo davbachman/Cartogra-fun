@@ -30,12 +30,11 @@ import {
   useEarthTextureVersion,
   type EarthTextureRequest,
 } from '../lib/earthTexture'
-import { sampleGeodesicArc, sampleMapLinePreimage } from '../lib/geodesic'
+import { sampleGeodesicArc } from '../lib/geodesic'
 import {
   analyzeIndicatrixAtPoint,
   sampleGlobeIndicatrixBoundary,
 } from '../lib/indicatrix'
-import { buildMapScene } from '../lib/mapScene'
 import { baseMapMesh } from '../lib/mesh'
 import {
   clamp,
@@ -78,7 +77,6 @@ const STAR_POSITIONS = (() => {
 const GLOBE_CAMERA_DISTANCE = 4.05
 const GLOBE_CAMERA_FOV = 30
 const PROJECTION_ROTATION_DEG_PER_PIXEL = 0.3
-const GEODESIC_MAP_SCENE_SIZE = { width: 1280, height: 720 }
 const GEODESIC_LINE_LAYERS: readonly WideLineLayer[] = [
   { color: '#110904', linewidth: 5, opacity: 0.62 },
   { color: '#ffba5d', linewidth: 2.35, opacity: 0.96 },
@@ -475,46 +473,18 @@ function GlobeScene() {
 
     return sampleGlobeIndicatrixBoundary(selection, indicatrix, selectionSource)
   }, [indicatrix, selection, selectionSource])
-  const mapSceneForPreimage = useMemo(() => {
-    if (
-      !geodesicSelection ||
-      geodesicSelection.source !== 'map' ||
-      geodesicSelection.points.length < 2
-    ) {
-      return null
-    }
-
-    return buildMapScene(
-      activeProjection,
-      projectionFrame,
-      globeOrientation,
-      GEODESIC_MAP_SCENE_SIZE,
-    )
-  }, [activeProjection, geodesicSelection, globeOrientation, projectionFrame])
   const globeCurveSegments = useMemo(() => {
     if (!geodesicSelection || geodesicSelection.points.length < 2) {
       return []
     }
 
-    if (geodesicSelection.source === 'globe') {
-      return [
-        sampleGeodesicArc(
-          geodesicSelection.points[0],
-          geodesicSelection.points[1],
-        ),
-      ]
-    }
-
-    if (!mapSceneForPreimage) {
-      return []
-    }
-
-    return sampleMapLinePreimage(
-      mapSceneForPreimage,
-      geodesicSelection.points[0],
-      geodesicSelection.points[1],
-    )
-  }, [geodesicSelection, mapSceneForPreimage])
+    return [
+      sampleGeodesicArc(
+        geodesicSelection.points[0],
+        geodesicSelection.points[1],
+      ),
+    ]
+  }, [geodesicSelection])
 
   useLayoutEffect(() => {
     if (!viewTiltGroupRef.current || !viewSpinGroupRef.current) {
